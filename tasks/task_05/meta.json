@@ -1,0 +1,5 @@
+{
+  "id": "task_05",
+  "type": "non_exactness",
+  "why": "summary 'condition is inverted' plus visible not (...) is sufficient — remove not"
+}

@@ -1,0 +1,13 @@
+{
+  "id": "task_03",
+  "type": "exactness_sensitive",
+  "load_bearing_token": "KeyError: 'ts', 'uid', 'evt', 'lvl'",
+  "category": "wrong_key",
+  "validity_check": "abbreviated keys have multiple plausible expansions; runtime names each wrong key",
+  "plausible_wrong_patches_from_summary": [
+    "ts -> time, uid -> user, evt -> event",
+    "ts -> created_at, uid -> user_id, evt -> action",
+    "ts -> timestamp, uid -> id, evt -> type",
+    "ts -> timestamp, uid -> user_id, evt -> event_type (correct)"
+  ]
+}

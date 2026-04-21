@@ -1,0 +1,14 @@
+{
+  "id": "task_01",
+  "type": "exactness_sensitive",
+  "load_bearing_token": "which case fails and which exception was expected",
+  "category": "wrong_exception_type",
+  "validity_check": "three identical wrong raises; summary 'wrong exception type' leaves open which case and which target; runtime names both",
+  "plausible_wrong_patches_from_summary": [
+    "fix only case 1 to ValueError",
+    "fix only case 2 to KeyError",
+    "fix all three to ValueError",
+    "fix all three to different exceptions",
+    "change the mode list instead"
+  ]
+}

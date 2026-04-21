@@ -1,0 +1,5 @@
+{
+  "id": "task_06",
+  "type": "non_exactness",
+  "why": "summary 'slice excludes last middle element' plus visible items[1:n-1] is sufficient"
+}

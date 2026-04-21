@@ -1,0 +1,5 @@
+{
+  "id": "task_07",
+  "type": "non_exactness",
+  "why": "summary 'accumulates with addition instead of multiplication' plus visible result += n is sufficient"
+}

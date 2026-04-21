@@ -1,0 +1,15 @@
+{
+  "id": "task_02",
+  "type": "exactness_sensitive",
+  "load_bearing_token": "'alice | 30 | eng' != 'alice::30::eng' and empty field not filtered",
+  "category": "exact_formatting",
+  "validity_check": "multiple plausible delimiters; two independent bugs both revealed by exact output",
+  "plausible_wrong_patches_from_summary": [
+    "change to comma separator",
+    "change to colon separator",
+    "change to double-colon only, miss the filter bug",
+    "add filter only, miss the delimiter bug",
+    "change to semicolon separator"
+  ],
+  "note": "bundles two fixes — noted in writeup limitations"
+}

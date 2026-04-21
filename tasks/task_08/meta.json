@@ -1,0 +1,5 @@
+{
+  "id": "task_08",
+  "type": "non_exactness",
+  "why": "summary 'no base case, infinite recursion' plus visible missing if-statement is sufficient"
+}

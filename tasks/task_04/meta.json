@@ -1,0 +1,13 @@
+{
+  "id": "task_04",
+  "type": "exactness_sensitive",
+  "load_bearing_token": "'2024-15-3 9:5' != '2024-03-15 09:05'",
+  "category": "exact_formatting",
+  "validity_check": "two independent bugs: field swap and missing zero-padding; neither inferrable from code structure alone",
+  "plausible_wrong_patches_from_summary": [
+    "fix field order only, miss padding",
+    "fix padding only, miss field order",
+    "fix order incorrectly as year-month-day-hour (already has year)",
+    "add padding to wrong fields"
+  ]
+}
