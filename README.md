@@ -10,6 +10,10 @@ This project tests a simple fix. Before any tool output enters the agent's conte
 
 The question is whether that works.
 
+**Note**:
+
+This pilot applies summarization at arrival time (every non-exactness observation is compressed the moment it arrives). A more practical production design would separate the two steps. The classifier would still run at arrival and attach an exactness flag to each observation, but compression would only happen when context pressure crosses a threshold. This way short sessions would never pay summarization cost at all and long sessions would compact selectively, respecting the exactness flags, only when they actually need to. However, for this pilot this becomes a messier experiment, because the three conditions only diverge once compaction triggers. The current pilot isolates the effect more cleanly by making the conditions differ from the first observation. The deferred design is the right next step after this pilot establishes whether the effect is real.
+
 ---
 
 ## Hypotheses
