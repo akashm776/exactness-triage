@@ -1,10 +1,10 @@
 # Exactness-Aware Arrival-Time Triage
 
-AI coding agents use tools. They read files, run tests, write fixes. Every time a tool returns output, that output goes into the agent's context window. Over a session, everything accumulates. The agent reasons over all of it equally.
+AI coding agents use tools. They read files, run tests, write fixes. Every time a tool returns output, that output goes into the agent's context window. Over a long run session, everything accumulates and once the session window has reached some threshold, agent does some compaction. Most compaction approaches summarizes over all of the context equally.
 
-That is the problem.
+That could be a problem.
 
-Some tool outputs can be summarized without losing anything important. A test that fails because the sort direction is wrong — a summary captures that. But some outputs contain one specific thing the agent needs to see exactly. An error message naming the wrong key. A test diff showing two bugs at once. A KeyError with an abbreviated name that has five plausible expansions. Summarize those and the agent fails. Not because it is not smart enough. Because the information it needed was thrown away before it ever saw it.
+Some tool outputs can be summarized without losing anything important. A test that fails because for example the sort direction is wrong can be captured via a summary. But some outputs contain one specific thing the agent needs to see exactly. These are a few examples: an error message naming the wrong key, test diff showing two bugs at once, a KeyError with an abbreviated name that has five plausible expansions. If these are summarized then there is a chance vital information might be lost causing the agent to fail.
 
 This project tests a simple fix. Before any tool output enters the agent's context, run a classifier. If the output contains load-bearing exact information, pass it through unchanged. Otherwise summarize it. This happens at arrival time — before the context gets polluted — not after.
 
