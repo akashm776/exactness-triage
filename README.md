@@ -1,6 +1,14 @@
 # Exactness-Aware Arrival-Time Triage
 
-A pilot experiment testing whether a rule-based classifier can identify tool observations that lose action-critical information under summarization, and whether preserving only those observations verbatim maintains coding agent performance closer to full-exact context than uniform summarization.
+AI coding agents use tools. They read files, run tests, write fixes. Every time a tool returns output, that output goes into the agent's context window. Over a session, everything accumulates. The agent reasons over all of it equally.
+
+That is the problem.
+
+Some tool outputs can be summarized without losing anything important. A test that fails because the sort direction is wrong — a summary captures that. But some outputs contain one specific thing the agent needs to see exactly. An error message naming the wrong key. A test diff showing two bugs at once. A KeyError with an abbreviated name that has five plausible expansions. Summarize those and the agent fails. Not because it is not smart enough. Because the information it needed was thrown away before it ever saw it.
+
+This project tests a simple fix. Before any tool output enters the agent's context, run a classifier. If the output contains load-bearing exact information, pass it through unchanged. Otherwise summarize it. This happens at arrival time — before the context gets polluted — not after.
+
+The question is whether that works.
 
 ---
 
