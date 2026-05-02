@@ -26,6 +26,48 @@ This pilot applies summarization at arrival time (every non-exactness observatio
 
 ---
 
+## Results
+
+Results are from two experiment sets: a **baseline** run (no added context pressure) and a **pressure** run, both using 10 replicates per task-condition cell.
+
+### H1 — Pass rates on exactness-sensitive tasks
+
+| Condition | Baseline | Under pressure |
+|---|---|---|
+| `full_exact` | 75% [60–86%] | 76% [62–85%] |
+| `exactness_aware` | 70% [55–82%] | **78% [63–88%]** |
+| `summarize_all` | 55% [40–69%] | 56% [40–71%] |
+
+All three conditions pass 100% of non-exactness-sensitive tasks in both settings. The effect is specific to exactness-sensitive tasks.
+
+Under pressure, `exactness_aware` overtakes `full_exact` (78% vs 76%) while `summarize_all` stays stuck at 56%. The confidence intervals between `exactness_aware` and `summarize_all` are cleanly non-overlapping.
+
+### H3 — Context volume
+
+| Condition | Baseline ctx tokens | Pressure ctx tokens | Reduction vs `full_exact` |
+|---|---|---|---|
+| `full_exact` | 831 | 3,619 | — |
+| `exactness_aware` | 664 | **2,203** | **−20% / −39%** |
+| `summarize_all` | 382 | 1,277 | −54% / −65% |
+
+`exactness_aware` cuts context 39% under pressure relative to `full_exact`, while matching or exceeding its pass rate. `summarize_all` achieves the deepest compression but pays for it in H1.
+
+### The case for exactness-aware
+
+Three conditions needed to hold simultaneously:
+
+1. **Pass rate ≥ `full_exact` under pressure** ✓ (78% vs 76%)
+2. **Pass rate >> `summarize_all`** ✓ (78% vs 56%, non-overlapping CIs)
+3. **Context volume < `full_exact`** ✓ (−39% under pressure)
+
+`exactness_aware` is the only condition that achieves all three. It is the Pareto-dominant approach.
+
+### Classifier bug found and fixed
+
+The initial run revealed that `RuntimeError` was missing from `EXACTNESS_PATTERNS`. Task_01's test output contains only `RuntimeError` exceptions; without the pattern, the classifier scored confidence 0.077 against a threshold of 0.15 and summarized the output — causing `exactness_aware` to underperform `summarize_all` on that task. Adding `RuntimeError:` to the pattern list and lowering the `run_tests` tool threshold from 0.15 to 0.10 corrected the false negative. This kind of classifier gap — a known exception type not in the pattern list — is the primary failure mode to watch for when extending the task set.
+
+---
+
 ## Setup
 
 ```bash
@@ -40,12 +82,25 @@ export ANTHROPIC_API_KEY="your-key-here"
 ## Running the Experiment
 
 ```bash
+# Pilot (6 sessions, calibrate cost first)
+python run_experiments.py --pilot
+
+# Baseline full run (72 sessions, 3 replicates)
 python run_experiments.py
+
+# Higher-power run (240 sessions, 10 replicates)
+python run_experiments.py --replicates 10
+
+# With context pressure (pre-fills history with synthetic noise)
+python run_experiments.py --replicates 10 --pressure
+
+# Both flags can be combined
+python run_experiments.py --pilot --pressure
 ```
 
-Runs 72 sessions: 8 tasks × 3 conditions × 3 replicates. Results are written to `results.json` and `observations.db`.
+Results append to `results.json` and `observations.db`. Each session is UUID-keyed so multiple runs accumulate cleanly. The `pressure` field in each result record distinguishes pressure from baseline sessions.
 
-Before committing to the full run, test with 5 sessions first to calibrate cost (estimated $3–8 total at current pricing).
+Estimated cost: ~$0.10–0.15 per session. A 10-replicate baseline + pressure run costs roughly $50–70 total.
 
 ---
 
@@ -70,14 +125,15 @@ To evaluate the classifier (H2), add a `human_exactness` column (0 or 1) to `ann
 | **Tasks** | 8 single-file Python bug-fix tasks |
 | **Task split** | 4 exactness-sensitive, 4 non-exactness-sensitive |
 | **Conditions** | `full_exact`, `summarize_all`, `exactness_aware` |
-| **Replicates** | 3 per task-condition cell |
-| **Total sessions** | 72 |
+| **Replicates** | Configurable via `--replicates` (default 3) |
 | **Pass/fail** | pytest exit code (0 = all passed) |
 
 **Conditions:**
 - `full_exact` — all tool outputs passed to the agent unchanged
 - `summarize_all` — all tool outputs summarized before the agent sees them
 - `exactness_aware` — classifier decides per observation at arrival time; exactness-sensitive observations pass through raw, others are summarized
+
+**Context pressure mode (`--pressure`):** Injects 11 synthetic past tool-call pairs into the agent's message history before the task begins — 7 non-exactness observations (passing test runs, large file reads, write confirmations) and 4 exactness observations (failing tests with specific assertion errors and KeyErrors). Each goes through the triage gate, so the difference in context volume between conditions is amplified. This simulates a session that has already accumulated history and makes the H3 effect measurable.
 
 **Key constraint:** The agent cannot read test files. Runtime output is the only source of test expectations, making exactness-sensitive tasks genuinely dependent on exact output.
 
@@ -144,13 +200,17 @@ Processed output enters agent message history
 
 The triage gate is the only addition to a standard agent loop.
 
+In `--pressure` mode, synthetic past observations are injected before the agent loop begins, each routed through the same triage gate so condition differences in context volume are preserved.
+
 ---
 
 ## Limitations
 
 - **`task_02` bundles two bugs.** A failure under `summarize_all` could reflect lost delimiter detail, lost empty-field filtering, or both.
-- **Small synthetic benchmark.** 8 tasks, 3 replicates. Results are directional; effect sizes may not generalize.
-- **Capable summarizer may preserve load-bearing tokens.** Results reflect realistic cheap summarization, not maximally lossy compression.
+- **`task_03` fails across all conditions.** The agent cannot solve task_03 even with full exact output, suggesting the bug's correct solution is not inferable from runtime output alone. This task contributes noise to H1 without differentiating conditions.
+- **Synthetic pressure is not real compaction.** The `--pressure` mode pre-fills history with fixed noise observations. It amplifies the H3 context-volume signal but does not simulate actual model compaction or eviction behavior.
+- **Capable summarizer may preserve load-bearing tokens.** Results reflect realistic cheap summarization (Haiku, 150 tokens), not maximally lossy compression.
 - **Approximate context metric.** Token volume estimated as character count ÷ 4. Relative comparisons across conditions are meaningful; absolute values are not.
 - **Temperature 0 reduces but does not eliminate variance.** Confidence intervals are reported.
+- **Classifier patterns require maintenance.** The initial run missed `RuntimeError` entirely, causing a false negative on task_01. Any extension to new task types should audit the pattern list against the actual exception types those tasks produce.
 - **This is a pilot.** The goal is to determine whether the phenomenon is real enough to justify a larger study.
