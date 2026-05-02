@@ -1,70 +1,120 @@
 # Exactness-Aware Arrival-Time Triage
 
-AI coding agents use tools. They read files, run tests, write fixes. Every time a tool returns output, that output goes into the agent's context window. Over a long run session, everything accumulates and once the session window has reached some threshold, agent does some compaction. Most compaction approaches summarizes over all of the context equally.
+AI coding agents use tools. They read files, run tests, inspect errors, and write fixes. Every tool output becomes part of the agent's working context. In long sessions, this creates pressure: either the context grows too large, or the agent/runtime has to compact previous observations.
 
-That could be a problem.
+Most compaction treats observations uniformly. This project tests a narrower idea:
 
-Some tool outputs can be summarized without losing anything important. A test that fails because for example the sort direction is wrong can be captured via a summary. But some outputs contain one specific thing the agent needs to see exactly. These are a few examples: an error message naming the wrong key, test diff showing two bugs at once, a KeyError with an abbreviated name that has five plausible expansions. If these are summarized then there is a chance vital information might be lost causing the agent to fail.
+> Some tool outputs can be safely summarized. Others contain exact, load-bearing details that should be preserved verbatim.
 
-This project tests a simple fix. Before any tool output enters the agent's context, run a classifier. If the output contains load-bearing exact information, pass it through unchanged. Otherwise summarize it. This happens at arrival time — before the context gets polluted — not after.
+Examples of exactness-sensitive information include:
 
-The question is whether that works.
+- a `KeyError` naming the missing key
+- an assertion diff showing the expected and actual values
+- an exception type that distinguishes between multiple plausible fixes
+- a test failure where one abbreviation, delimiter, or field name determines the solution
 
-**Note**:
+Uniform summarization can erase or blur these details. This repo tests **arrival-time exactness triage**: classify each tool output before it enters the agent's context. If the observation appears exactness-sensitive, preserve it raw. Otherwise, summarize it.
 
-This pilot applies summarization at arrival time (every non-exactness observation is compressed the moment it arrives). A more practical production design would separate the two steps. The classifier would still run at arrival and attach an exactness flag to each observation, but compression would only happen when context pressure crosses a threshold. This way short sessions would never pay summarization cost at all and long sessions would compact selectively, respecting the exactness flags, only when they actually need to. However, for this pilot this becomes a messier experiment, because the three conditions only diverge once compaction triggers. The current pilot isolates the effect more cleanly by making the conditions differ from the first observation. The deferred design is the right next step after this pilot establishes whether the effect is real.
+The question is simple:
+
+> Can exactness-aware triage reduce context volume without sacrificing task success?
+
+---
+
+## Core Idea
+
+A normal coding-agent loop looks like this:
+
+```text
+Agent calls tool
+      ↓
+Tool returns output
+      ↓
+Output enters context
+      ↓
+Agent continues
+```
+
+This project inserts one gate:
+
+```text
+Agent calls tool
+      ↓
+Tool returns raw output
+      ↓
+[Exactness Triage Gate]
+      ├── exactness-sensitive → keep raw
+      └── not exactness-sensitive → summarize
+      ↓
+Processed output enters context
+```
+
+The gate runs at **arrival time**, before the context is polluted with unnecessary detail.
+
+A more production-like design would likely defer summarization until context pressure is actually high. In that setting, the arrival-time classifier would attach metadata to each observation, and later compaction would use those flags. This pilot compresses immediately so the three experimental conditions differ from the first observation, making the effect easier to measure.
 
 ---
 
 ## Hypotheses
 
-**H1.** Summarizing exactness-sensitive observations causes task failure at a higher rate than summarizing non-exactness-sensitive ones.
+**H1.** Uniformly summarizing exactness-sensitive observations hurts task success more than summarizing non-exactness-sensitive observations.
 
-**H2.** A rule-based classifier identifies exactness-sensitive observations with acceptable precision and recall on a stratified held-out sample.
+**H2.** A simple rule-based classifier can identify exactness-sensitive tool outputs with reasonable precision and recall.
 
-**H3.** Exactness-aware triage reduces approximate context token volume relative to full-exact context, while maintaining comparable pass rates on exactness-sensitive tasks.
+**H3.** Exactness-aware triage reduces approximate context volume relative to full raw context while maintaining better task success than uniform summarization.
 
 ---
 
-## Results
+## Results Summary
 
-Results are from two experiment sets: a **baseline** run (no added context pressure) and a **pressure** run, both using 10 replicates per task-condition cell.
+The current pilot includes two experiment settings:
 
-### H1 — Pass rates on exactness-sensitive tasks
+1. **Baseline:** normal agent runs with no extra context pressure.
+2. **Pressure:** synthetic prior tool observations are injected into the conversation before the task begins.
 
-| Condition | Baseline | Under pressure |
-|---|---|---|
-| `full_exact` | 75% [60–86%] | 76% [62–85%] |
-| `exactness_aware` | 70% [55–82%] | **78% [63–88%]** |
-| `summarize_all` | 55% [40–69%] | 56% [40–71%] |
+Each setting uses:
 
-All three conditions pass 100% of non-exactness-sensitive tasks in both settings. The effect is specific to exactness-sensitive tasks.
+```text
+8 tasks × 3 conditions × 10 replicates = 240 sessions
+```
 
-Under pressure, `exactness_aware` overtakes `full_exact` (78% vs 76%) while `summarize_all` stays stuck at 56%. The confidence intervals between `exactness_aware` and `summarize_all` are cleanly non-overlapping.
+The task set contains 4 exactness-sensitive tasks and 4 non-exactness-sensitive tasks.
 
-### H3 — Context volume
+### H1: Exactness-Sensitive Pass Rate
 
-| Condition | Baseline ctx tokens | Pressure ctx tokens | Reduction vs `full_exact` |
-|---|---|---|---|
-| `full_exact` | 831 | 3,619 | — |
-| `exactness_aware` | 664 | **2,203** | **−20% / −39%** |
-| `summarize_all` | 382 | 1,277 | −54% / −65% |
+| Condition         |     Baseline | Under Pressure |
+| ----------------- | -----------: | -------------: |
+| `full_exact`      | 75% [60–86%] |   76% [62–85%] |
+| `exactness_aware` | 70% [55–82%] |   78% [63–88%] |
+| `summarize_all`   | 55% [40–69%] |   56% [40–71%] |
 
-`exactness_aware` cuts context 39% under pressure relative to `full_exact`, while matching or exceeding its pass rate. `summarize_all` achieves the deepest compression but pays for it in H1.
+All three conditions achieved 100% pass rate on non-exactness-sensitive tasks in both settings.
 
-### The case for exactness-aware
+The important pattern is that `summarize_all` is consistently worse on exactness-sensitive tasks, while `exactness_aware` remains close to `full_exact`. Under pressure, `exactness_aware` slightly outperforms `full_exact` in this run, but the confidence intervals overlap, so this should be interpreted as **comparable pass rate**, not a definitive win.
 
-Three conditions needed to hold simultaneously:
+The stronger claim is:
 
-1. **Pass rate ≥ `full_exact` under pressure** ✓ (78% vs 76%)
-2. **Pass rate >> `summarize_all`** ✓ (78% vs 56%, non-overlapping CIs)
-3. **Context volume < `full_exact`** ✓ (−39% under pressure)
+> `exactness_aware` preserved task success much better than `summarize_all` on exactness-sensitive tasks.
 
-`exactness_aware` is the only condition that achieves all three. It is the Pareto-dominant approach.
+### H3: Context Volume
 
-### Classifier bug found and fixed
+Approximate context volume is estimated using character count divided by 4. This is not an exact tokenizer measurement, but it is useful for relative comparisons across conditions.
 
-The initial run revealed that `RuntimeError` was missing from `EXACTNESS_PATTERNS`. Task_01's test output contains only `RuntimeError` exceptions; without the pattern, the classifier scored confidence 0.077 against a threshold of 0.15 and summarized the output — causing `exactness_aware` to underperform `summarize_all` on that task. Adding `RuntimeError:` to the pattern list and lowering the `run_tests` tool threshold from 0.15 to 0.10 corrected the false negative. This kind of classifier gap — a known exception type not in the pattern list — is the primary failure mode to watch for when extending the task set.
+| Condition         | Baseline Context Tokens | Pressure Context Tokens | Reduction vs `full_exact` |
+| ----------------- | ----------------------: | ----------------------: | ------------------------: |
+| `full_exact`      |                     831 |                   3,619 |                         — |
+| `exactness_aware` |                     664 |                   2,203 |               −20% / −39% |
+| `summarize_all`   |                     382 |                   1,277 |               −54% / −65% |
+
+`summarize_all` compresses the most, but loses task success on exactness-sensitive problems. `full_exact` preserves all details, but carries the largest context. `exactness_aware` gives the best tradeoff in this pilot: substantially lower context than `full_exact`, with much better pass rate than `summarize_all`.
+
+### Current Interpretation
+
+The pilot supports the core idea:
+
+> Exactness-aware triage is a better default than uniform summarization when tool outputs may contain load-bearing exact details.
+
+The result should still be treated as a pilot finding, not a broad benchmark result. The task set is small, synthetic, and designed to isolate the failure mode.
 
 ---
 
@@ -79,28 +129,54 @@ export ANTHROPIC_API_KEY="your-key-here"
 
 ---
 
-## Running the Experiment
+## Running Experiments
+
+### Pilot Run
+
+Use this first to verify setup and estimate cost.
 
 ```bash
-# Pilot (6 sessions, calibrate cost first)
 python run_experiments.py --pilot
-
-# Baseline full run (72 sessions, 3 replicates)
-python run_experiments.py
-
-# Higher-power run (240 sessions, 10 replicates)
-python run_experiments.py --replicates 10
-
-# With context pressure (pre-fills history with synthetic noise)
-python run_experiments.py --replicates 10 --pressure
-
-# Both flags can be combined
-python run_experiments.py --pilot --pressure
 ```
 
-Results append to `results.json` and `observations.db`. Each session is UUID-keyed so multiple runs accumulate cleanly. The `pressure` field in each result record distinguishes pressure from baseline sessions.
+This runs:
 
-Estimated cost: ~$0.10–0.15 per session. A 10-replicate baseline + pressure run costs roughly $50–70 total.
+```text
+2 tasks × 3 conditions × 1 replicate = 6 sessions
+```
+
+### Baseline Full Run
+
+```bash
+python run_experiments.py --replicates 10
+```
+
+### Pressure Run
+
+```bash
+python run_experiments.py --replicates 10 --pressure
+```
+
+### Important: Keep Runs Separate
+
+The experiment script appends to `results.json`. For clean analysis, run baseline and pressure experiments separately and save their outputs.
+
+Recommended workflow:
+
+```bash
+# Baseline
+rm -f results.json observations.db
+python run_experiments.py --replicates 10
+mkdir -p results
+cp results.json results/baseline_results.json
+cp observations.db results/baseline_observations.db
+
+# Pressure
+rm -f results.json observations.db
+python run_experiments.py --replicates 10 --pressure
+cp results.json results/pressure_results.json
+cp observations.db results/pressure_observations.db
+```
 
 ---
 
@@ -110,107 +186,205 @@ Estimated cost: ~$0.10–0.15 per session. A 10-replicate baseline + pressure ru
 python analyze.py
 ```
 
-Prints pass-rate tables with Wilson confidence intervals (H1), mean context token volume and billed tokens by condition (H3), failure examples from `summarize_all`, and exports `annotation_sample.csv` for manual H2 labeling.
+The analysis script reports:
 
-To evaluate the classifier (H2), add a `human_exactness` column (0 or 1) to `annotation_sample.csv`, then re-run `analyze.py`.
+* pass rates by condition and task type
+* Wilson confidence intervals
+* approximate context volume
+* billed token averages
+* latency averages
+* failure examples from `summarize_all`
+* annotation samples for classifier evaluation
+
+To evaluate H2, run `analyze.py` first to generate `annotation_sample.csv`, then manually label each row by adding a `human_exactness` column:
+
+```text
+1 = exactness-sensitive
+0 = not exactness-sensitive
+```
+
+Then rerun `analyze.py`. The script will report classifier precision, recall, and false negatives.
 
 ---
 
 ## Experimental Design
 
-| | |
-|---|---|
-| **Agent model** | Claude Sonnet 4.6, temperature 0, max 10 steps |
-| **Summarizer model** | Claude Haiku, temperature 0, max 150 tokens |
-| **Tasks** | 8 single-file Python bug-fix tasks |
-| **Task split** | 4 exactness-sensitive, 4 non-exactness-sensitive |
-| **Conditions** | `full_exact`, `summarize_all`, `exactness_aware` |
-| **Replicates** | Configurable via `--replicates` (default 3) |
-| **Pass/fail** | pytest exit code (0 = all passed) |
+| Field                   | Value                                            |
+| ----------------------- | ------------------------------------------------ |
+| Agent model             | Claude Sonnet 4.6                                |
+| Summarizer model        | Claude Haiku                                     |
+| Agent temperature       | 0                                                |
+| Max agent steps         | 10                                               |
+| Tasks                   | 8 single-file Python bug-fix tasks               |
+| Task split              | 4 exactness-sensitive, 4 non-exactness-sensitive |
+| Conditions              | `full_exact`, `summarize_all`, `exactness_aware` |
+| Default replicates      | 3                                                |
+| Higher-power replicates | 10                                               |
+| Pass/fail metric        | pytest exit code                                 |
 
-**Conditions:**
-- `full_exact` — all tool outputs passed to the agent unchanged
-- `summarize_all` — all tool outputs summarized before the agent sees them
-- `exactness_aware` — classifier decides per observation at arrival time; exactness-sensitive observations pass through raw, others are summarized
+### Conditions
 
-**Context pressure mode (`--pressure`):** Injects 11 synthetic past tool-call pairs into the agent's message history before the task begins — 7 non-exactness observations (passing test runs, large file reads, write confirmations) and 4 exactness observations (failing tests with specific assertion errors and KeyErrors). Each goes through the triage gate, so the difference in context volume between conditions is amplified. This simulates a session that has already accumulated history and makes the H3 effect measurable.
+| Condition         | Behavior                                                     |
+| ----------------- | ------------------------------------------------------------ |
+| `full_exact`      | Pass every tool output to the agent unchanged                |
+| `summarize_all`   | Summarize every tool output before the agent sees it         |
+| `exactness_aware` | Preserve exactness-sensitive outputs raw; summarize the rest |
 
-**Key constraint:** The agent cannot read test files. Runtime output is the only source of test expectations, making exactness-sensitive tasks genuinely dependent on exact output.
+### Key Constraint
+
+The agent cannot read test files directly. It can only observe test expectations through runtime output from `run_tests`. This makes exactness-sensitive tasks genuinely dependent on tool-output details.
 
 ---
 
 ## Task Set
 
-### Exactness-Sensitive
+### Exactness-Sensitive Tasks
 
-| Task | Bug | Why exactness matters |
-|---|---|---|
-| `task_01` | Wrong exception type, 3 candidates | Summary "wrong exception type" leaves open which case and which target |
-| `task_02` | Wrong delimiter + missing empty-field filter | Multiple plausible delimiters; two independent bugs both revealed by exact output |
-| `task_03` | Abbreviated wrong key names | `ts`, `uid`, `evt`, `lvl` each have multiple plausible expansions |
-| `task_04` | Field swap + missing zero-padding | Neither the swap direction nor which fields need padding are inferrable from code alone |
+| Task      | Bug                                               | Why Exactness Matters                                                                     |
+| --------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `task_01` | Wrong exception type among multiple candidates    | A generic summary may say "wrong exception type" without preserving which one is expected |
+| `task_02` | Wrong delimiter and missing empty-field filtering | Two separate bugs are revealed through exact test output                                  |
+| `task_03` | Abbreviated key names                             | Keys such as `ts`, `uid`, `evt`, and `lvl` have multiple plausible expansions             |
+| `task_04` | Field swap and missing zero-padding               | The correct field direction and padding requirements are not obvious from code alone      |
 
-### Non-Exactness-Sensitive
+### Non-Exactness-Sensitive Tasks
 
-| Task | Bug | Why summary suffices |
-|---|---|---|
-| `task_05` | Inverted boolean | "Condition is inverted" + visible `not (...)` → remove `not` |
-| `task_06` | Off-by-one in slice | "Slice excludes last middle element" + visible `items[1:n-2]` is sufficient |
-| `task_07` | Wrong accumulator operation | "Accumulates with addition instead of multiplication" + visible `result += n` is sufficient |
-| `task_08` | Missing base case | "No base case, infinite recursion" + visible missing `if` statement is sufficient |
+| Task      | Bug                         | Why Summary Suffices                                            |
+| --------- | --------------------------- | --------------------------------------------------------------- |
+| `task_05` | Inverted boolean            | "Condition is inverted" plus visible source code is enough      |
+| `task_06` | Off-by-one slice            | "Slice excludes last middle element" plus source code is enough |
+| `task_07` | Wrong accumulator operation | "Uses addition instead of multiplication" is enough             |
+| `task_08` | Missing base case           | "Infinite recursion / missing base case" is enough              |
 
 ---
 
-## Directory Structure
+## Context Pressure Mode
 
-```
+The `--pressure` flag injects synthetic prior tool observations before the main task begins.
+
+These include:
+
+* verbose passing test runs
+* large but mostly irrelevant file reads
+* write confirmations
+* failing test outputs with exact assertion and exception details
+
+Each synthetic observation passes through the same triage gate as real tool outputs. This amplifies context-volume differences between the three conditions.
+
+This is not meant to fully simulate production context compaction. It is a controlled stressor that makes the cost/correctness tradeoff easier to observe.
+
+---
+
+## Repository Structure
+
+```text
 exactness-triage/
 ├── tasks/
 │   ├── task_01/
-│   │   ├── buggy.py             ← reset before each session
-│   │   ├── buggy_original.py    ← never modified
+│   │   ├── buggy.py
+│   │   ├── buggy_original.py
 │   │   ├── test_buggy.py
 │   │   └── meta.json
-│   ├── task_02/ ... task_08/
-├── agent.py                     ← triage gate, classifier, agent loop, DB logging
-├── run_experiments.py           ← outer experiment loop
-├── analyze.py                   ← H1/H2/H3 analysis and annotation export
+│   ├── task_02/
+│   └── ...
+├── agent.py
+├── run_experiments.py
+├── analyze.py
 ├── requirements.txt
-├── observations.db              ← generated: per-observation archive
-├── results.json                 ← generated: per-session summary
-└── annotation_sample.csv        ← generated: stratified sample for H2 labeling
+├── results.json              # generated
+├── observations.db           # generated
+└── annotation_sample.csv     # generated
 ```
 
 ---
 
-## Architecture
+## Implementation Overview
 
-```
-Agent calls tool
-      ↓
-Tool executes, returns raw output
-      ↓
-[Triage Gate]
-  classify_exactness(tool_name, content)
-  log raw + metadata to SQLite
-  apply condition treatment
-      ↓
-Processed output enters agent message history
-```
+### `agent.py`
 
-The triage gate is the only addition to a standard agent loop.
+Contains:
 
-In `--pressure` mode, synthetic past observations are injected before the agent loop begins, each routed through the same triage gate so condition differences in context volume are preserved.
+* the coding-agent loop
+* tool definitions
+* test execution
+* file read/write helpers
+* exactness classifier
+* triage logic
+* SQLite logging
+* pressure-history construction
+
+### `run_experiments.py`
+
+Runs the outer experiment loop across:
+
+* tasks
+* conditions
+* replicates
+* baseline vs pressure mode
+
+### `analyze.py`
+
+Computes:
+
+* pass-rate tables
+* Wilson confidence intervals
+* context-volume averages
+* latency and billed-token summaries
+* failure examples
+* annotation samples for H2
+
+---
+
+## Classifier
+
+The current classifier is rule-based. It uses tool priors and regex patterns for outputs likely to contain exact details, such as:
+
+* `AssertionError`
+* `KeyError`
+* `TypeError`
+* `ValueError`
+* `AttributeError`
+* `RuntimeError`
+* `ModuleNotFoundError`
+* pytest `FAILED` / `ERROR`
+* expected-vs-actual diffs
+
+This is intentionally simple. The point of the pilot is not to prove that this classifier is optimal. The point is to test whether exactness-sensitive observations are worth treating differently at all.
 
 ---
 
 ## Limitations
 
-- **`task_02` bundles two bugs.** A failure under `summarize_all` could reflect lost delimiter detail, lost empty-field filtering, or both.
-- **`task_03` fails across all conditions.** The agent cannot solve task_03 even with full exact output, suggesting the bug's correct solution is not inferable from runtime output alone. This task contributes noise to H1 without differentiating conditions.
-- **Synthetic pressure is not real compaction.** The `--pressure` mode pre-fills history with fixed noise observations. It amplifies the H3 context-volume signal but does not simulate actual model compaction or eviction behavior.
-- **Capable summarizer may preserve load-bearing tokens.** Results reflect realistic cheap summarization (Haiku, 150 tokens), not maximally lossy compression.
-- **Approximate context metric.** Token volume estimated as character count ÷ 4. Relative comparisons across conditions are meaningful; absolute values are not.
-- **Temperature 0 reduces but does not eliminate variance.** Confidence intervals are reported.
-- **Classifier patterns require maintenance.** The initial run missed `RuntimeError` entirely, causing a false negative on task_01. Any extension to new task types should audit the pattern list against the actual exception types those tasks produce.
-- **This is a pilot.** The goal is to determine whether the phenomenon is real enough to justify a larger study.
+* **Small benchmark.** The current task set has only 8 tasks.
+* **Synthetic tasks.** The benchmark is controlled and useful for isolating the phenomenon, but it does not prove generality across real repositories.
+* **Synthetic pressure.** Pressure mode injects fixed prior observations. It does not simulate real long-horizon compaction, eviction, or memory decay.
+* **Confidence intervals overlap.** The pilot supports a strong directional result, but some condition comparisons are not statistically decisive.
+* **`task_02` bundles two bugs.** A failure may reflect loss of delimiter detail, loss of empty-field filtering, or both.
+* **`task_03` is noisy.** The agent fails even with full exact output, suggesting the task may be too underdetermined.
+* **Approximate token volume.** Context volume is estimated using character count divided by 4, not a model-specific tokenizer.
+* **Classifier needs maintenance.** New task families may require additional patterns or a learned classifier.
+* **Summarizer quality matters.** A stronger or more verbose summarizer may preserve more exact details, reducing the observed gap.
+* **This is a pilot.** The goal is to determine whether the phenomenon is real enough to justify a larger benchmark.
+
+---
+
+## Main Takeaway
+
+Uniform summarization is too blunt for coding agents.
+
+Some observations are safe to compress. Others contain exact details that determine whether the agent can solve the task. This pilot shows that a simple arrival-time exactness gate can preserve those details, reduce context volume, and avoid the failure mode introduced by summarizing everything.
+
+The strongest current claim is:
+
+> In a controlled coding-agent benchmark, exactness-aware triage preserved pass rate on exactness-sensitive tasks substantially better than uniform summarization while reducing context volume relative to full raw context.
+
+---
+
+## Next Steps
+
+* Commit clean baseline and pressure result artifacts.
+* Complete H2 manual annotation and report classifier precision/recall.
+* Add real-world bug-fix tasks from small open-source repositories.
+* Replace the rule-based classifier with a learned or LLM-based exactness classifier.
+* Test deferred compaction: classify at arrival time, but summarize only when context pressure crosses a threshold.
+* Evaluate on longer multi-step tasks where tool-output history matters more.
