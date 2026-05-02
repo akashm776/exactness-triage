@@ -62,10 +62,6 @@ Three conditions needed to hold simultaneously:
 
 `exactness_aware` is the only condition that achieves all three. It is the Pareto-dominant approach.
 
-### Classifier bug found and fixed
-
-The initial run revealed that `RuntimeError` was missing from `EXACTNESS_PATTERNS`. Task_01's test output contains only `RuntimeError` exceptions; without the pattern, the classifier scored confidence 0.077 against a threshold of 0.15 and summarized the output — causing `exactness_aware` to underperform `summarize_all` on that task. Adding `RuntimeError:` to the pattern list and lowering the `run_tests` tool threshold from 0.15 to 0.10 corrected the false negative. This kind of classifier gap — a known exception type not in the pattern list — is the primary failure mode to watch for when extending the task set.
-
 ---
 
 ## Setup
