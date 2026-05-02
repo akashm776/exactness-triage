@@ -60,7 +60,7 @@ Three conditions needed to hold simultaneously:
 2. **Pass rate >> `summarize_all`** ✓ (78% vs 56%, non-overlapping CIs)
 3. **Context volume < `full_exact`** ✓ (−39% under pressure)
 
-`exactness_aware` is the only condition that achieves all three. It is the Pareto-dominant approach.
+`exactness_aware` is the only condition that achieves all three.
 
 ---
 
