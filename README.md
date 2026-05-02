@@ -4,7 +4,7 @@ AI coding agents use tools. They read files, run tests, write fixes. Every time 
 
 That could be a problem.
 
-Some tool outputs can be summarized without losing anything important. A test that fails because for example the sort direction is wrong can be captured via a summary. But some outputs contain one specific thing the agent needs to see exactly. These are a few examples: an error message naming the wrong key, test diff showing two bugs at once, a KeyError with an abbreviated name that has five plausible expansions. If these are summarized then there is a chance vital information might be lost causing the agent to fail.
+Some tool outputs can be safely summarized because their useful signal is coarse-grained. For example, a bug caused by sorting in the wrong direction can usually be captured in a short description. Other outputs are different: they contain exact details the agent may need later. An error message might name the wrong key, a test diff might reveal two separate bugs, or a KeyError might contain an abbreviated name with several plausible meanings. If those details are compressed too aggressively, the summary may drop the one piece of information needed to fix the issue.
 
 This project tests a simple fix. Before any tool output enters the agent's context, run a classifier. If the output contains load-bearing exact information, pass it through unchanged. Otherwise summarize it. This happens at arrival time — before the context gets polluted — not after.
 
