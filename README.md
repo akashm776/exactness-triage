@@ -127,7 +127,8 @@ To evaluate the classifier (H2), add a `human_exactness` column (0 or 1) to `ann
 **Conditions:**
 - `full_exact` — all tool outputs passed to the agent unchanged
 - `summarize_all` — all tool outputs summarized before the agent sees them
-- `exactness_aware` — classifier decides per observation at arrival time; exactness-sensitive observations pass through raw, others are summarized
+- `exactness_aware` — regex classifier decides per observation; exactness-sensitive outputs pass through raw, others are summarized
+- `exactness_aware_llm` — same as above but uses an LLM classifier instead of regex (see [LLM Classifier](#llm-classifier))
 
 **Context pressure mode (`--pressure`):** Injects 11 synthetic past tool-call pairs into the agent's message history before the task begins — 7 non-exactness observations (passing test runs, large file reads, write confirmations) and 4 exactness observations (failing tests with specific assertion errors and KeyErrors). Each goes through the triage gate, so the difference in context volume between conditions is amplified. This simulates a session that has already accumulated history and makes the H3 effect measurable.
 
@@ -197,6 +198,24 @@ Processed output enters agent message history
 The triage gate is the only addition to a standard agent loop.
 
 In `--pressure` mode, synthetic past observations are injected before the agent loop begins, each routed through the same triage gate so condition differences in context volume are preserved.
+
+---
+
+## LLM Classifier
+
+`exactness_aware_llm` replaces the regex classifier with a zero-shot Haiku call. Every tool output gets a binary classification before any routing decision is made.
+
+**Prompt design.** The classifier receives the tool name and the first 2000 characters of the output, then replies with exactly one word: `EXACT` or `SUMMARY`. The prompt defines both classes with concrete examples to anchor the decision:
+
+> *Exactness-sensitive*: a specific exception type distinguishing multiple plausible fixes; an assertion diff showing precise expected vs actual values; a key name or delimiter the agent cannot guess from source code alone.
+>
+> *Not exactness-sensitive*: a passing test run; a file write confirmation; a failure whose cause is obvious from the source code alone (inverted boolean, off-by-one in a visible slice).
+
+**Pilot evidence.** An 8-session pilot (2 tasks × 4 conditions × 1 replicate) showed the LLM classifier correctly labeling all failing `run_tests` outputs on task_01 as `EXACT` — the correct call, since task_01 requires knowing which of three `RuntimeError` subtypes is raised. The regex classifier made the same decisions on that pilot. The single-replicate task_01 failure under `exactness_aware_llm` is within the variance expected from a one-replicate run and does not indicate a classification error.
+
+**Cost tradeoff.** Each observation routed through the LLM classifier incurs one Haiku call (~300–500 input tokens + 1 output token). In the pilot, `exactness_aware_llm` billed ~36K tokens per session vs ~17K for `exactness_aware` (regex) — roughly 2× the API cost. The regex classifier is free beyond the base model calls.
+
+**Status.** A full benchmark comparing LLM vs regex classifier accuracy (H2) across all 8 tasks with 10 replicates is pending. The pilot establishes that the LLM classifier is operational and makes sensible decisions; the larger run would measure whether it catches cases the regex misses and whether the extra cost translates to a pass-rate gain.
 
 ---
 
